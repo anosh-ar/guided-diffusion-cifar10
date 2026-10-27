@@ -1,0 +1,133 @@
+% Pipeline of the class-conditional DDPM with classifier-free guidance.
+% Build:  pdflatex pipeline.tex   (produces pipeline.pdf; requires TikZ, amsmath)
+\documentclass[tikz,border=10pt]{standalone}
+\usepackage{amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
+
+\definecolor{cData}{HTML}{3B6EA8}
+\definecolor{cOp}{HTML}{C77C1E}
+\definecolor{cNet}{HTML}{3A8A55}
+\definecolor{cLoss}{HTML}{B5443B}
+\definecolor{cEval}{HTML}{6F4FA0}
+
+\tikzset{
+  >={Stealth[length=2.4mm]},
+  node distance=7mm and 9mm,
+  box/.style={draw, rounded corners=3pt, align=center, minimum height=13mm, inner sep=5pt,
+              font=\small, line width=0.7pt},
+  data/.style={box, draw=cData, fill=cData!8},
+  op/.style={box, draw=cOp, fill=cOp!9},
+  net/.style={box, draw=cNet, fill=cNet!9, minimum height=22mm},
+  emb/.style={box, draw=cNet, fill=cNet!4, minimum height=10mm, font=\footnotesize},
+  loss/.style={box, draw=cLoss, fill=cLoss!8},
+  eval/.style={box, draw=cEval, fill=cEval!8, minimum width=44mm, minimum height=17mm},
+  arr/.style={->, line width=0.75pt},
+  lbl/.style={font=\scriptsize, fill=white, inner sep=1.5pt},
+  panel/.style={draw=gray!55, rounded corners=8pt, dashed, line width=0.6pt, inner sep=9pt},
+  ptitle/.style={font=\bfseries, anchor=south west, inner sep=2pt},
+}
+
+\begin{document}
+\begin{tikzpicture}
+
+% =====================================================================
+% (a) Training
+% =====================================================================
+\node[data] (x0) {CIFAR-10 image\\ $x_0 \in [-1,1]^{3\times 32\times 32}$};
+\node[data, below=14mm of x0] (y) {class label\\ $y \in \{0,\dots,9\}$};
+\node[data, above=9mm of x0] (eps) {$\epsilon \sim \mathcal{N}(0, I)$};
+
+\node[op, right=of x0, minimum width=50mm] (fwd)
+  {\textbf{Forward diffusion} $q(x_t \mid x_0)$\\[2pt]
+   $x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1-\bar\alpha_t}\,\epsilon$};
+\node[data, above=9mm of fwd] (t) {$t \sim \mathcal{U}\{0,\dots,T{-}1\}$\\ \footnotesize schedule: linear / cosine / sigmoid};
+
+\node[op, right=of y, minimum width=50mm] (drop)
+  {\textbf{Condition dropout}\\ $c = \varnothing$ with prob.\ $p_{\text{uncond}}=0.1$,\\ else $c = y$};
+
+\node[net, right=14mm of fwd, yshift=-12mm, minimum width=42mm] (unet)
+  {\textbf{U-Net} $\epsilon_\theta(x_t, t, c)$\\[3pt]
+   \footnotesize ResNet blocks (FiLM)\\ \footnotesize linear attention per level\\
+   \footnotesize full attention at bottleneck\\ \footnotesize skip connections};
+
+\node[emb, above=7mm of unet] (temb) {sinusoidal $t$-embedding + MLP};
+\node[emb, below=7mm of unet] (cemb) {class embedding ($10+1$ entries, incl.\ $\varnothing$)};
+
+\node[loss, right=14mm of unet] (loss)
+  {\textbf{Loss}\\[2pt] $\mathcal{L} = \big\lVert \epsilon - \epsilon_\theta(x_t, t, c) \big\rVert_2^2$};
+\node[loss, below=11mm of loss] (opt) {AdamW + warm-up\\ EMA of weights};
+
+\draw[arr] (x0) -- (fwd);
+\draw[arr] (eps.south) -- ++(0,-3mm) -| ($(fwd.north west)!0.12!(fwd.north east)$);
+\draw[arr] (t) -- (fwd);
+\draw[arr] (y) -- (drop);
+\draw[arr] (fwd.east) -- node[lbl, above] {$x_t$} ++(7mm,0) |- (unet.west);
+\draw[arr] (t.east) -| (temb.north);
+\draw[arr] (temb) -- (unet);
+\draw[arr] (drop.east) -- ++(4mm,0) |- (cemb.west);
+\draw[arr] (cemb) -- (unet);
+\draw[arr] (unet) -- node[lbl, above] {$\hat\epsilon$} (loss);
+\draw[arr] (eps.north) -- ++(0,6mm) -| node[lbl, pos=0.25, above] {target noise $\epsilon$} (loss.north);
+\draw[arr] (loss) -- node[lbl, right] {$\nabla_\theta \mathcal{L}$} (opt);
+
+\begin{scope}[on background layer]
+  \node[panel, fit={(x0)(y)(eps)(t)(fwd)(drop)(unet)(temb)(cemb)(loss)(opt)($(eps.north)+(0,7mm)$)}] (pA) {};
+\end{scope}
+\node[ptitle] at (pA.north west) {(a) Training \;\normalfont\small(Algorithm 1, Ho et al.\ 2020)};
+
+% =====================================================================
+% (b) Sampling
+% =====================================================================
+\node[data, below=26mm of y] (xT) {$x_{T} \sim \mathcal{N}(0, I)$\\ \footnotesize target class $c$, weight $w$};
+
+\node[net, right=12mm of xT, minimum height=17mm, minimum width=66mm] (cfg)
+  {\textbf{Classifier-free guidance}\\[3pt]
+   $\tilde\epsilon = (1+w)\,\epsilon_\theta(x_t, t, c) - w\,\epsilon_\theta(x_t, t, \varnothing)$\\[1pt]
+   \footnotesize both branches in one batched forward pass};
+
+\node[op, right=12mm of cfg, minimum height=17mm, minimum width=70mm] (step)
+  {\textbf{Reverse step} $p_\theta(x_{t-1} \mid x_t)$\\[3pt]
+   $x_{t-1} = \dfrac{1}{\sqrt{\alpha_t}}\Big(x_t - \dfrac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\tilde\epsilon\Big) + \sigma_t z$\\[1pt]
+   \footnotesize $\sigma_t^2 = \tilde\beta_t$, \; $z=0$ at $t=0$};
+
+\node[data, right=12mm of step] (xhat) {generated\\ image $\hat{x}_0$};
+
+\draw[arr] (xT) -- node[lbl, above] {$x_t$} (cfg);
+\draw[arr] (cfg) -- node[lbl, above] {$\tilde\epsilon$} (step);
+\draw[arr] (step) -- node[lbl, above] {$t = 0$} (xhat);
+\draw[arr] (step.south) -- ++(0,-7mm) -| node[lbl, pos=0.25, below] {$t \leftarrow t-1$, \; repeat for $t = T{-}1, \dots, 0$} (cfg.south);
+
+\draw[arr, dashed, cNet] (opt.south) -- ++(0,-10mm) -| node[lbl, pos=0.3, above, text=cNet] {trained EMA weights $\theta$} ($(cfg.north west)!0.5!(cfg.north east)$);
+
+\begin{scope}[on background layer]
+  \node[panel, fit={(xT)(cfg)(step)(xhat)($(step.south)+(0,-11mm)$)}] (pB) {};
+\end{scope}
+\node[ptitle] at (pB.north west) {(b) Sampling \;\normalfont\small(Algorithm 2 + guidance, Ho \& Salimans 2022)};
+
+% =====================================================================
+% (c) Evaluation
+% =====================================================================
+\node[eval, below=32mm of cfg, xshift=-30mm] (fid)
+  {\textbf{FID \& Inception Score}\\ \footnotesize 10k class-balanced samples\\
+   \footnotesize vs.\ CIFAR-10 test set, sweep over $w$};
+\node[eval, right=of fid] (qual)
+  {\textbf{Qualitative figures}\\ \footnotesize class grid, denoising trajectory,\\ \footnotesize guidance sweep};
+\node[eval, right=of qual] (curves)
+  {\textbf{Loss curves}\\ \footnotesize train / val (EMA) / test MSE,\\ \footnotesize schedule comparison};
+
+% "bus" line just below the sampling panel feeding the evaluation boxes
+\coordinate (bus) at ($(xhat.south |- pB.south)+(0,-4mm)$);
+\draw[arr] (xhat.south) -- (bus) -| (qual.north);
+\draw[arr] (bus) -| (fid.north);
+\coordinate (rail) at ($(xhat.east)+(7mm,0)$);
+\draw[arr, dashed, cLoss] (loss.east) -- (loss.east -| rail) |- node[lbl, pos=0.75, above, text=cLoss] {per-epoch metrics} (curves.east);
+
+\begin{scope}[on background layer]
+  \node[panel, fit=(fid)(qual)(curves)] (pC) {};
+\end{scope}
+\node[ptitle, anchor=north west] at (pC.south west) {(c) Evaluation \;\normalfont\small(\texttt{evaluate.py}, \texttt{sample.py}, \texttt{compare\_runs.py})};
+
+\end{tikzpicture}
+\end{document}

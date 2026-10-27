@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+.vscode/
+.history/
+.DS_Store
+Thumbs.db
+
+# Data, runs and checkpoints (large, reproducible)
+data/
+runs/
+*.pt
+*.pth
+*.ckpt
+
+# Local, non-redistributable files
+*.pdf
+!docs/pipeline.pdf
+tests/data/
+
+# LaTeX build artefacts (keep the .tex sources and the rendered pipeline figure)
+docs/*.aux
+docs/*.log
+docs/*.synctex.gz
+docs/*.fdb_latexmk
+docs/*.fls
+test.py
