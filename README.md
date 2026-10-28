@@ -25,23 +25,27 @@ weights, loss curves, and qualitative figures.
 
 ## Results
 
-> **Note:** run `bash scripts/reproduce.sh` to produce the numbers and figures below. The script writes every
-> table and figure into [`assets/`](assets). Paste `assets/results.md` and `assets/schedule_comparison.md`
-> into the tables below.
+The model reported here uses the **cosine schedule**. It was trained for **300 epochs** (105k steps, batch size 128)
+with bf16 mixed precision on a single **RTX 3090**, which took **4.2 h**. Every figure and table below comes from
+`EPOCHS=300 SCHEDULES="cosine" bash scripts/reproduce.sh` and is written to [`assets/`](assets).
 
 ### Sample quality vs. guidance weight
 
-<!-- paste assets/results.md here -->
-| guidance w | FID ↓ | Inception Score ↑ |
-|---:|---:|---:|
-| 0 | – | – |
-| 0.5 | – | – |
-| 1 | – | – |
-| 2 | – | – |
-| 4 | – | – |
+| guidance w | FID ↓ | Inception Score ↑ | sampling time |
+|---:|---:|---:|---:|
+| 0 | 15.26 | 8.38 ± 0.26 | 32.9 min |
+| **0.5** | **13.97** | 8.99 ± 0.19 | 63.2 min |
+| 1 | 20.34 | **9.11 ± 0.22** | 63.2 min |
+| 2 | 41.85 | 8.75 ± 0.14 | 63.2 min |
+| 4 | 91.93 | 7.21 ± 0.15 | 63.2 min |
 
 FID uses 10,000 generated images (1,000 per class) against the CIFAR-10 test set, with 2048-d InceptionV3 features.
-Small guidance weights usually give the best FID. Larger weights trade diversity for fidelity: IS goes up, FID gets worse again.
+Sampling uses all 1000 reverse steps. For `w > 0`, each step needs a conditional and an unconditional forward pass,
+so it is about twice as slow.
+
+A little guidance helps: **`w = 0.5` gives the best FID (13.97)**, about 1.3 lower than plain conditional sampling.
+IS peaks at `w = 1`. Beyond that, guidance trades diversity for fidelity, and at `w ≥ 2` the samples become
+over-saturated (some collapse to nearly flat images), so both FID and IS get worse.
 
 <p align="center">
   <img src="assets/fid_vs_guidance.png" width="48%" alt="FID and IS vs guidance weight">
@@ -50,7 +54,7 @@ Small guidance weights usually give the best FID. Larger weights trade diversity
 
 ### Samples
 
-| Class-conditional samples (one row per class) | Effect of the guidance weight `w` (same initial noise) |
+| Class-conditional samples at `w = 0.5` (one row per class) | Effect of the guidance weight `w` (same initial noise) |
 |:---:|:---:|
 | ![class grid](assets/class_grid.png) | ![guidance sweep](assets/guidance_sweep.png) |
 
@@ -62,17 +66,16 @@ Small guidance weights usually give the best FID. Larger weights trade diversity
 
 ![beta schedules](assets/beta_schedules.png)
 
-<!-- paste assets/schedule_comparison.md here -->
-| schedule | best val loss | test loss (EMA) | best FID (at w) |
-|---|---:|---:|---:|
-| linear | – | – | – |
-| cosine | – | – | – |
-| sigmoid | – | – | – |
+All three schedules are implemented. Because of the compute budget, only the cosine model was trained to the end
+and fully evaluated. A shorter linear-schedule run (100 epochs) reached FID 19.26 / IS 7.68 at `w = 0` on 10k
+samples, compared with 15.26 / 8.38 for the 300-epoch cosine model. The two runs differ in training length as well
+as schedule, so this is not a controlled comparison. Validation losses are not comparable across schedules either,
+because each schedule weights the timesteps differently. `compare_runs.py` therefore ranks runs by FID.
 
 | Schedule | Behaviour |
 |---|---|
 | **Linear** (`1e-4 → 0.02`) | The original DDPM schedule. The signal ᾱₜ drops quickly, so many late timesteps are almost pure noise and add little to training. |
-| **Cosine** | Defined through ᾱₜ ∝ cos²(·). The signal decays almost linearly through the middle of the process and destroys information more slowly. It usually works better at low resolutions such as 32×32. |
+| **Cosine** | Defined through ᾱₜ ∝ cos²(·). The signal decays almost linearly through the middle of the process and destroys information more slowly. Nichol & Dhariwal report it works better at low resolutions such as 32×32. |
 | **Sigmoid** (`1e-4 → 0.02`) | Small βₜ early and a sharp rise in the middle. It keeps the image almost clean for longer, then switches to the noisy regime quickly. |
 
 ## Installation
@@ -151,7 +154,7 @@ python compare_runs.py runs/cifar10_linear runs/cifar10_cosine runs/cifar10_sigm
 
 ```bash
 bash scripts/reproduce.sh                                   # defaults: 100 epochs, 3 schedules
-EPOCHS=50 SCHEDULES="cosine" bash scripts/reproduce.sh      # quicker variant
+EPOCHS=300 SCHEDULES="cosine" bash scripts/reproduce.sh     # the configuration reported above (~9 h on an RTX 3090)
 scripts/run_in_tmux.sh ddpm bash scripts/reproduce.sh       # detached, survives SSH disconnects
 ```
 

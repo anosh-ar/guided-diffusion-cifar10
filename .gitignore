@@ -34,3 +34,6 @@ docs/*.synctex.gz
 docs/*.fdb_latexmk
 docs/*.fls
 test.py
+
+# Pipeline logs
+reproduce*.log
