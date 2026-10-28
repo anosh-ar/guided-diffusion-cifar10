@@ -100,6 +100,20 @@ python sample.py --checkpoint runs/<run>/checkpoints/best.pt             # make 
 python evaluate.py --checkpoint runs/<run>/checkpoints/best.pt --amp     # FID / IS
 ```
 
+### Pretrained model
+
+The trained weights (EMA, 44 MB) are available on the [Releases page](https://github.com/anosh-ar/guided-diffusion-cifar10/releases).
+Generate images without training:
+
+```bash
+curl -L -o ddpm_cifar10_cosine_ema.pt \
+    https://github.com/anosh-ar/guided-diffusion-cifar10/releases/latest/download/ddpm_cifar10_cosine_ema.pt
+python sample.py --checkpoint ddpm_cifar10_cosine_ema.pt --guidance_scale 0.5 --out_dir figures
+python evaluate.py --checkpoint ddpm_cifar10_cosine_ema.pt --amp      # reproduce the FID / IS table
+```
+
+### Reproduce everything
+
 To reproduce all results above with one command (training, evaluation and figures):
 
 ```bash
