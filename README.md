@@ -60,11 +60,13 @@ In more detail:
 <p align="center">
   <img src="assets/loss_curve.png" width="55%" alt="Training and validation loss">
 </p>
-<p align="center"><sub>Training and validation loss (EMA weights) over the first 150 epochs.</sub></p>
+<p align="center"><sub>Training and validation loss (EMA weights) over 300 epochs.</sub></p>
 
-The noise-prediction loss levels off early, but this loss is a weak proxy for image quality: diffusion models keep
-improving their samples (and FID) long after the loss curve looks flat. For this reason training was run for a fixed
-300 epochs instead of being stopped early.
+**Why train for 300 epochs when the loss looks flat?** The noise-prediction loss is a weak proxy for image
+quality: diffusion models keep improving their samples (and FID) long after the loss curve looks flat. The loss
+itself also kept improving slowly. The lowest validation loss was reached at **epoch 295** (0.0537, compared with
+0.0542 at epoch 150), and the evaluated checkpoint is taken from that epoch. Early stopping on the loss would
+therefore have cut training short, so the model was trained for a fixed number of epochs instead.
 
 ### Guidance weight
 
