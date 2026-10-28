@@ -12,7 +12,7 @@ and is trained on CIFAR-10.
 ## Results
 
 **FID 13.97** and **Inception Score 9.11** on CIFAR-10 (10k samples). The model has 10.9M parameters and was trained
-for 300 epochs, which took 4.2 h on one RTX 3090.
+for 300 epochs (about 4 hours on a single GPU).
 
 <p align="center">
   <img src="assets/class_grid.png" width="62%" alt="Generated samples, one row per class">
@@ -33,6 +33,35 @@ for 300 epochs, which took 4.2 h on one RTX 3090.
 2. **Generation:** start from random noise and let the U-Net remove a little noise, 1000 times. The guidance weight
    `w` sets how strongly the image should match the chosen class.
 
+In more detail:
+
+- **Forward process.** A noisy version of an image at step t can be computed in one go:
+  $x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1-\bar\alpha_t}\,\epsilon$, where $\bar\alpha_t$ comes from the noise
+  schedule and $\epsilon$ is Gaussian noise.
+- **Training objective.** The U-Net $\epsilon_\theta(x_t, t, c)$ is trained with the mean squared error between the
+  true noise $\epsilon$ and its prediction.
+- **Classifier-free guidance.** At each sampling step the model predicts the noise twice, with the class $c$ and
+  without it ($\varnothing$), and combines the two predictions:
+  $\tilde\epsilon = (1+w)\,\epsilon_\theta(x_t, t, c) - w\,\epsilon_\theta(x_t, t, \varnothing)$.
+  With `w = 0` this is plain conditional sampling. Both predictions run in one batched forward pass.
+
+### Model and training setup
+
+| | |
+|---|---|
+| Network | U-Net, 10.9M parameters: ResNet blocks, time and class embeddings, attention at every resolution |
+| Diffusion | T = 1000 steps, cosine noise schedule (linear and sigmoid also available) |
+| Conditioning | 10 classes + a learned "no class" token; labels dropped with probability 0.1 during training |
+| Optimisation | AdamW, learning rate 2e-4 with warm-up, batch size 128, gradient clipping, 300 epochs |
+| Stabilisation | exponential moving average (EMA) of the weights, used for evaluation and sampling |
+| Efficiency | bfloat16 mixed precision, resumable checkpoints |
+| Evaluation | FID and Inception Score on 10,000 samples (1,000 per class) against the CIFAR-10 test set |
+
+<p align="center">
+  <img src="assets/loss_curve.png" width="55%" alt="Training and validation loss">
+</p>
+<p align="center"><sub>Training and validation loss (EMA weights) over 300 epochs.</sub></p>
+
 ### Guidance weight
 
 | guidance w | FID ↓ | Inception Score ↑ |
@@ -43,7 +72,9 @@ for 300 epochs, which took 4.2 h on one RTX 3090.
 | 2 | 41.85 | 8.75 |
 | 4 | 91.93 | 7.21 |
 
-A little guidance helps (best FID at `w = 0.5`). Too much makes the images over-saturated and less diverse.
+A little guidance helps: `w = 0.5` gives the best FID, and the Inception Score peaks at `w = 1`. Stronger guidance
+makes each image look more like its class but reduces variety, and at `w ≥ 2` the colours become over-saturated, so
+both scores get worse.
 
 <p align="center">
   <img src="assets/guidance_sweep.png" width="60%" alt="Effect of the guidance weight">
@@ -63,7 +94,7 @@ python sample.py --checkpoint runs/<run>/checkpoints/best.pt             # make 
 python evaluate.py --checkpoint runs/<run>/checkpoints/best.pt --amp     # FID / IS
 ```
 
-To reproduce all results above with one command (about 9 h on an RTX 3090):
+To reproduce all results above with one command (training, evaluation and figures):
 
 ```bash
 EPOCHS=300 SCHEDULES="cosine" bash scripts/reproduce.sh
