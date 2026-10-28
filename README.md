@@ -5,253 +5,98 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## Introduction
+A from-scratch PyTorch diffusion model that **generates new 32×32 images of a chosen class** (airplane, car, bird,
+cat, …) from pure noise. It implements DDPM (Ho et al., 2020) with classifier-free guidance (Ho & Salimans, 2022)
+and is trained on CIFAR-10.
 
-This project trains a generative model that **creates new 32×32 colour images of a chosen object class** (airplane,
-car, bird, cat, deer, dog, frog, horse, ship or truck) from pure random noise. It is a from-scratch PyTorch
-implementation of **Denoising Diffusion Probabilistic Models** (DDPM, Ho et al., 2020) with **classifier-free
-guidance** (Ho & Salimans, 2022), trained on CIFAR-10.
+## Results
 
-The idea behind diffusion models has two parts:
-
-1. **Forward process (fixed).** Over T = 1000 steps, a training image is gradually destroyed by adding a little
-   Gaussian noise at each step, until only noise is left.
-2. **Reverse process (learned).** A U-Net learns to undo one step of this noising: given a noisy image, the
-   timestep and the class label, it predicts the noise that was added. To generate an image, we start from pure
-   noise and apply the network 1000 times, removing a little noise each time.
-
-**Classifier-free guidance** lets one network act as both a class-conditional and an unconditional model, because
-labels are randomly dropped during training. At sampling time the two predictions are mixed with a weight `w`,
-which controls how strongly the image should look like its class. This trades sample diversity against fidelity.
-
-The repository covers the whole workflow: training with EMA, three noise schedules (linear, cosine, sigmoid),
-FID / Inception Score evaluation across guidance weights, qualitative figures, unit tests and a one-command
-reproduction script.
-
-## Results at a glance
-
-The cosine-schedule model (10.9M parameters, 300 epochs, 4.2 h on one RTX 3090) reaches **FID 13.97** at
-guidance weight `w = 0.5` and an **Inception Score of 9.11** at `w = 1` (10k samples, CIFAR-10 test set).
+**FID 13.97** and **Inception Score 9.11** on CIFAR-10 (10k samples). The model has 10.9M parameters and was trained
+for 300 epochs, which took 4.2 h on one RTX 3090.
 
 <p align="center">
-  <img src="assets/class_grid.png" width="62%" alt="Class-conditional samples, one row per class">
+  <img src="assets/class_grid.png" width="62%" alt="Generated samples, one row per class">
 </p>
-<p align="center"><sub>Generated samples at <code>w = 0.5</code>, one row per class. None of these images exist in the dataset.</sub></p>
+<p align="center"><sub>Generated images, one row per class. None of them are in the dataset.</sub></p>
 
 <p align="center">
   <img src="assets/trajectory.png" width="62%" alt="Reverse diffusion from noise to image">
 </p>
-<p align="center"><sub>Reverse diffusion: each row starts as pure noise (t = 999) and is denoised step by step into an image (t = 0).</sub></p>
+<p align="center"><sub>From noise (left) to image (right): the model removes a little noise at each of 1000 steps.</sub></p>
 
-## Pipeline
+## How it works
 
 ![pipeline](docs/pipeline.png)
 
-**(a) Training:** a CIFAR-10 image is noised to a random timestep t, and the U-Net learns to predict that noise.
-The class label is dropped 10% of the time so the network also learns the unconditional model. **(b) Sampling:**
-starting from noise, the guided noise estimate drives 1000 reverse steps. **(c) Evaluation:** FID / IS over guidance
-weights, qualitative figures and loss curves.
+1. **Training:** add a random amount of noise to an image and train a U-Net to predict that noise. The class label
+   is hidden 10% of the time, so the network also learns to work without it.
+2. **Generation:** start from random noise and let the U-Net remove a little noise, 1000 times. The guidance weight
+   `w` sets how strongly the image should match the chosen class.
 
-<sub>Diagram source: [`docs/pipeline.tex`](docs/pipeline.tex) (TikZ). Rebuild with `cd docs && pdflatex pipeline.tex`.</sub>
+### Guidance weight
 
-## Highlights
+| guidance w | FID ↓ | Inception Score ↑ |
+|---:|---:|---:|
+| 0 | 15.26 | 8.38 |
+| **0.5** | **13.97** | 8.99 |
+| 1 | 20.34 | **9.11** |
+| 2 | 41.85 | 8.75 |
+| 4 | 91.93 | 7.21 |
 
-- **Conditional U-Net** (≈10.9M parameters) with ResNet blocks, FiLM conditioning on time and class embeddings, linear attention at every resolution and full attention at the bottleneck.
-- **Classifier-free guidance.** A learned null-class token. Labels are dropped with probability `p_uncond = 0.1` during training. At sampling time both branches run in a single batched forward pass.
-- **Noise schedules:** linear, cosine (Nichol & Dhariwal, 2021) and sigmoid.
-- **Training:** AdamW with warm-up, gradient clipping, EMA of the weights, optional bf16 mixed precision, resumable checkpoints, per-epoch CSV logging.
-- **Evaluation:** FID and IS (torchmetrics / InceptionV3) on 10k class-balanced samples, swept over the guidance weight `w`; validation and test loss with a fixed noise seed; loss curves; class grids, denoising trajectories and guidance sweeps.
-- **Tests:** unit tests for the schedules, the forward process, guidance and the model. They run on CPU in GitHub Actions.
-
-## Detailed results
-
-The model reported here uses the **cosine schedule**. It was trained for **300 epochs** (105k steps, batch size 128)
-with bf16 mixed precision on a single **RTX 3090**, which took **4.2 h**. Every figure and table below comes from
-`EPOCHS=300 SCHEDULES="cosine" bash scripts/reproduce.sh` and is written to [`assets/`](assets).
-
-### Sample quality vs. guidance weight
-
-| guidance w | FID ↓ | Inception Score ↑ | sampling time |
-|---:|---:|---:|---:|
-| 0 | 15.26 | 8.38 ± 0.26 | 32.9 min |
-| **0.5** | **13.97** | 8.99 ± 0.19 | 63.2 min |
-| 1 | 20.34 | **9.11 ± 0.22** | 63.2 min |
-| 2 | 41.85 | 8.75 ± 0.14 | 63.2 min |
-| 4 | 91.93 | 7.21 ± 0.15 | 63.2 min |
-
-FID uses 10,000 generated images (1,000 per class) against the CIFAR-10 test set, with 2048-d InceptionV3 features.
-Sampling uses all 1000 reverse steps. For `w > 0`, each step needs a conditional and an unconditional forward pass,
-so it is about twice as slow.
-
-A little guidance helps: **`w = 0.5` gives the best FID (13.97)**, about 1.3 lower than plain conditional sampling.
-IS peaks at `w = 1`. Beyond that, guidance trades diversity for fidelity, and at `w ≥ 2` the samples become
-over-saturated (some collapse to nearly flat images), so both FID and IS get worse.
+A little guidance helps (best FID at `w = 0.5`). Too much makes the images over-saturated and less diverse.
 
 <p align="center">
-  <img src="assets/fid_vs_guidance.png" width="48%" alt="FID and IS vs guidance weight">
-  <img src="assets/loss_curve.png" width="48%" alt="Training curves">
+  <img src="assets/guidance_sweep.png" width="60%" alt="Effect of the guidance weight">
+  <img src="assets/fid_vs_guidance.png" width="38%" alt="FID and IS vs guidance weight">
 </p>
 
-### Effect of the guidance weight
-
-Each column starts from the same initial noise and class; only `w` changes. Moderate guidance sharpens the class
-features, while large `w` over-saturates the image.
-
-<p align="center">
-  <img src="assets/guidance_sweep.png" width="70%" alt="Guidance sweep">
-</p>
-
-### Noise schedules
-
-![beta schedules](assets/beta_schedules.png)
-
-All three schedules are implemented. Because of the compute budget, only the cosine model was trained to the end
-and fully evaluated. A shorter linear-schedule run (100 epochs) reached FID 19.26 / IS 7.68 at `w = 0` on 10k
-samples, compared with 15.26 / 8.38 for the 300-epoch cosine model. The two runs differ in training length as well
-as schedule, so this is not a controlled comparison. Validation losses are not comparable across schedules either,
-because each schedule weights the timesteps differently. `compare_runs.py` therefore ranks runs by FID.
-
-| Schedule | Behaviour |
-|---|---|
-| **Linear** (`1e-4 → 0.02`) | The original DDPM schedule. The signal ᾱₜ drops quickly, so many late timesteps are almost pure noise and add little to training. |
-| **Cosine** | Defined through ᾱₜ ∝ cos²(·). The signal decays almost linearly through the middle of the process and destroys information more slowly. Nichol & Dhariwal report it works better at low resolutions such as 32×32. |
-| **Sigmoid** (`1e-4 → 0.02`) | Small βₜ early and a sharp rise in the middle. It keeps the image almost clean for longer, then switches to the noisy regime quickly. |
-
-## Installation
+## Quick start
 
 ```bash
 git clone https://github.com/anosh-ar/guided-diffusion-cifar10.git
 cd guided-diffusion-cifar10
-python -m venv .venv && source .venv/bin/activate
-# PyTorch for your CUDA version (example: CUDA 12.1)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121   # match your CUDA version
 pip install -r requirements.txt
+
+python train.py --schedule cosine --epochs 300 --amp                     # train (CIFAR-10 downloads automatically)
+python sample.py --checkpoint runs/<run>/checkpoints/best.pt             # make figures
+python evaluate.py --checkpoint runs/<run>/checkpoints/best.pt --amp     # FID / IS
 ```
 
-CIFAR-10 is downloaded to `./data` on first use. You can change the location with `--data_dir`.
-
-## Usage
-
-**Check the setup** (a couple of batches end to end):
+To reproduce all results above with one command (about 9 h on an RTX 3090):
 
 ```bash
-python train.py --dry_run --timesteps 50
-pytest -q
+EPOCHS=300 SCHEDULES="cosine" bash scripts/reproduce.sh
 ```
 
-**Train:**
-
-```bash
-python train.py --schedule cosine --epochs 100 --amp
-```
-
-Each run writes to `runs/<run_name>/`:
-
-| File | Content |
-|---|---|
-| `config.json` | all arguments |
-| `metrics.csv` / `loss_curve.png` | per-epoch train loss, validation loss (EMA), learning rate, time |
-| `samples/epoch_XXX.png` | EMA samples during training (fixed seed, one row per class) |
-| `checkpoints/{best,last}.pt` | best by validation loss / latest (`--resume runs/<run>/checkpoints/last.pt`) |
-| `summary.json` | best validation loss, test loss, parameter count, training time |
-
-Main options (see `python train.py -h`):
-
-| Argument | Default | Description |
-|---|---|---|
-| `--schedule` | `linear` | `linear`, `cosine` or `sigmoid` |
-| `--timesteps` | `1000` | diffusion steps T |
-| `--epochs` / `--batch_size` / `--lr` | `100` / `128` / `2e-4` | optimisation |
-| `--dim` / `--dim_mults` | `64` / `1 2 4` | U-Net width and depth |
-| `--p_uncond` | `0.1` | label-dropout probability for classifier-free guidance |
-| `--unconditional` | off | train without labels |
-| `--ema_decay` | `0.9995` | EMA decay of the weights used for evaluation and sampling |
-| `--amp` | off | bf16 mixed precision (recommended on RTX 30xx/40xx and A100) |
-
-**Generate figures:**
-
-```bash
-python sample.py --checkpoint runs/<run>/checkpoints/best.pt --guidance_scale 1
-# -> runs/<run>/figures/{class_grid,trajectory,guidance_sweep}.png
-```
-
-**Evaluate (FID / IS):**
-
-```bash
-python evaluate.py --checkpoint runs/<run>/checkpoints/best.pt --num_samples 10000 \
-    --guidance_scales 0 0.5 1 2 4 --amp
-# -> runs/<run>/eval/{results.json,results.md,fid_vs_guidance.png}
-```
-
-**Compare runs:**
-
-```bash
-python compare_runs.py runs/cifar10_linear runs/cifar10_cosine runs/cifar10_sigmoid
-```
-
-**Reproduce everything.** This trains all three schedules, evaluates them and collects the figures in `assets/`:
-
-```bash
-bash scripts/reproduce.sh                                   # defaults: 100 epochs, 3 schedules
-EPOCHS=300 SCHEDULES="cosine" bash scripts/reproduce.sh     # the configuration reported above (~9 h on an RTX 3090)
-scripts/run_in_tmux.sh ddpm bash scripts/reproduce.sh       # detached, survives SSH disconnects
-```
-
-The script skips finished steps and resumes unfinished training, so it is safe to re-run.
-
-## Method
-
-**Forward process.** Gaussian noise is added over T steps according to the schedule βₜ. With αₜ = 1 − βₜ and
-ᾱₜ = ∏ₛ αₛ, the noised image at step t has the closed form
-
-$$x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1-\bar\alpha_t}\,\epsilon,\qquad \epsilon\sim\mathcal N(0, I).$$
-
-**Training.** The U-Net learns to predict the noise: $\mathcal L = \lVert \epsilon - \epsilon_\theta(x_t, t, c)\rVert^2$.
-The class label `c` is replaced by the null token ∅ with probability `p_uncond`, so one network learns both the
-conditional and the unconditional model.
-
-**Sampling with classifier-free guidance.** Starting from $x_T\sim\mathcal N(0,I)$, the two predictions are combined as
-
-$$\tilde\epsilon = (1+w)\,\epsilon_\theta(x_t, t, c) - w\,\epsilon_\theta(x_t, t, \varnothing)$$
-
-and the reverse step is applied: $x_{t-1} = \frac{1}{\sqrt{\alpha_t}}\big(x_t - \frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\tilde\epsilon\big) + \sigma_t z$,
-with $\sigma_t^2 = \tilde\beta_t = \beta_t\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}$. `w = 0` is plain conditional sampling.
+Run `pytest -q` for the unit tests. Every script has `-h` for its options (linear / cosine / sigmoid noise
+schedules, model size, guidance weight, …).
 
 ## Project structure
 
 ```
-ddpm/
-  diffusion.py     beta schedules, forward process, loss, guided reverse process
-  model.py         conditional U-Net (time + class embeddings, attention)
-  layers.py        helpers (up/downsampling, residual, extract)
-  data.py          CIFAR-10 loaders and transforms
-  utils.py         EMA, checkpoints, logging, loss-curve plots
-  visualize.py     labelled image grids
-train.py           training with validation, checkpoints and preview samples
-sample.py          qualitative figures from a checkpoint
-evaluate.py        FID / IS sweep over guidance weights
-compare_runs.py    loss curves and summary table across runs
-plot_schedules.py  beta / alpha-bar plots of the schedules
-scripts/           reproduce.sh, run_in_tmux.sh
-docs/              TikZ source of the pipeline diagram
-tests/             pytest unit tests
+ddpm/            diffusion process, U-Net, data loading, utilities
+train.py         training (EMA, mixed precision, checkpoints, metrics)
+sample.py        sample grids, denoising trajectory, guidance sweep
+evaluate.py      FID / Inception Score over guidance weights
+compare_runs.py  compare several runs (loss curves, summary table)
+scripts/         reproduce.sh: train, evaluate and collect figures in assets/
+docs/            LaTeX (TikZ) source of the pipeline diagram
+tests/           unit tests
 ```
 
 ## References
 
 - J. Ho, A. Jain, P. Abbeel. [Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2006.11239). NeurIPS 2020.
-- A. Nichol, P. Dhariwal. [Improved Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2102.09672). ICML 2021.
 - J. Ho, T. Salimans. [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598). NeurIPS Workshop 2021.
-- E. Perez et al. [FiLM: Visual Reasoning with a General Conditioning Layer](https://arxiv.org/abs/1709.07871). AAAI 2018.
-- M. Heusel et al. [GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium](https://arxiv.org/abs/1706.08500) (FID). NeurIPS 2017.
+- A. Nichol, P. Dhariwal. [Improved Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2102.09672). ICML 2021.
 
 ## Acknowledgements
 
 The U-Net building blocks are adapted from Phil Wang's
 [denoising-diffusion-pytorch](https://github.com/lucidrains/denoising-diffusion-pytorch) (MIT), through
-[The Annotated Diffusion Model](https://huggingface.co/blog/annotated-diffusion) by Niels Rogge and Kashif Rasul.
-The project started as part of the *Advanced Deep Learning* course at FAU Erlangen-Nürnberg (winter semester 2023/24).
-It has since been extended with bug fixes, EMA training, a full evaluation pipeline (FID / IS) and documentation.
+[The Annotated Diffusion Model](https://huggingface.co/blog/annotated-diffusion). The project started in the
+*Advanced Deep Learning* course at FAU Erlangen-Nürnberg (winter semester 2023/24).
 
 ## License
 
