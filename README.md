@@ -60,7 +60,11 @@ In more detail:
 <p align="center">
   <img src="assets/loss_curve.png" width="55%" alt="Training and validation loss">
 </p>
-<p align="center"><sub>Training and validation loss (EMA weights) over 300 epochs.</sub></p>
+<p align="center"><sub>Training and validation loss (EMA weights) over the first 150 epochs.</sub></p>
+
+The noise-prediction loss levels off early, but this loss is a weak proxy for image quality: diffusion models keep
+improving their samples (and FID) long after the loss curve looks flat. For this reason training was run for a fixed
+300 epochs instead of being stopped early.
 
 ### Guidance weight
 
