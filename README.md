@@ -5,14 +5,54 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A from-scratch PyTorch implementation of **Denoising Diffusion Probabilistic Models** (Ho et al., 2020) with
-**classifier-free guidance** (Ho & Salimans, 2022), trained on CIFAR-10. It includes three noise schedules
-(linear, cosine, sigmoid), EMA weights, and a full evaluation pipeline: FID and Inception Score across guidance
-weights, loss curves, and qualitative figures.
+## Introduction
+
+This project trains a generative model that **creates new 32×32 colour images of a chosen object class** (airplane,
+car, bird, cat, deer, dog, frog, horse, ship or truck) from pure random noise. It is a from-scratch PyTorch
+implementation of **Denoising Diffusion Probabilistic Models** (DDPM, Ho et al., 2020) with **classifier-free
+guidance** (Ho & Salimans, 2022), trained on CIFAR-10.
+
+The idea behind diffusion models has two parts:
+
+1. **Forward process (fixed).** Over T = 1000 steps, a training image is gradually destroyed by adding a little
+   Gaussian noise at each step, until only noise is left.
+2. **Reverse process (learned).** A U-Net learns to undo one step of this noising: given a noisy image, the
+   timestep and the class label, it predicts the noise that was added. To generate an image, we start from pure
+   noise and apply the network 1000 times, removing a little noise each time.
+
+**Classifier-free guidance** lets one network act as both a class-conditional and an unconditional model, because
+labels are randomly dropped during training. At sampling time the two predictions are mixed with a weight `w`,
+which controls how strongly the image should look like its class. This trades sample diversity against fidelity.
+
+The repository covers the whole workflow: training with EMA, three noise schedules (linear, cosine, sigmoid),
+FID / Inception Score evaluation across guidance weights, qualitative figures, unit tests and a one-command
+reproduction script.
+
+## Results at a glance
+
+The cosine-schedule model (10.9M parameters, 300 epochs, 4.2 h on one RTX 3090) reaches **FID 13.97** at
+guidance weight `w = 0.5` and an **Inception Score of 9.11** at `w = 1` (10k samples, CIFAR-10 test set).
+
+<p align="center">
+  <img src="assets/class_grid.png" width="62%" alt="Class-conditional samples, one row per class">
+</p>
+<p align="center"><sub>Generated samples at <code>w = 0.5</code>, one row per class. None of these images exist in the dataset.</sub></p>
+
+<p align="center">
+  <img src="assets/trajectory.png" width="62%" alt="Reverse diffusion from noise to image">
+</p>
+<p align="center"><sub>Reverse diffusion: each row starts as pure noise (t = 999) and is denoised step by step into an image (t = 0).</sub></p>
+
+## Pipeline
 
 ![pipeline](docs/pipeline.png)
 
-<sub>Diagram source: [`docs/pipeline.tex`](docs/pipeline.tex) (TikZ).</sub>
+**(a) Training:** a CIFAR-10 image is noised to a random timestep t, and the U-Net learns to predict that noise.
+The class label is dropped 10% of the time so the network also learns the unconditional model. **(b) Sampling:**
+starting from noise, the guided noise estimate drives 1000 reverse steps. **(c) Evaluation:** FID / IS over guidance
+weights, qualitative figures and loss curves.
+
+<sub>Diagram source: [`docs/pipeline.tex`](docs/pipeline.tex) (TikZ). Rebuild with `cd docs && pdflatex pipeline.tex`.</sub>
 
 ## Highlights
 
@@ -23,7 +63,7 @@ weights, loss curves, and qualitative figures.
 - **Evaluation:** FID and IS (torchmetrics / InceptionV3) on 10k class-balanced samples, swept over the guidance weight `w`; validation and test loss with a fixed noise seed; loss curves; class grids, denoising trajectories and guidance sweeps.
 - **Tests:** unit tests for the schedules, the forward process, guidance and the model. They run on CPU in GitHub Actions.
 
-## Results
+## Detailed results
 
 The model reported here uses the **cosine schedule**. It was trained for **300 epochs** (105k steps, batch size 128)
 with bf16 mixed precision on a single **RTX 3090**, which took **4.2 h**. Every figure and table below comes from
@@ -52,15 +92,14 @@ over-saturated (some collapse to nearly flat images), so both FID and IS get wor
   <img src="assets/loss_curve.png" width="48%" alt="Training curves">
 </p>
 
-### Samples
+### Effect of the guidance weight
 
-| Class-conditional samples at `w = 0.5` (one row per class) | Effect of the guidance weight `w` (same initial noise) |
-|:---:|:---:|
-| ![class grid](assets/class_grid.png) | ![guidance sweep](assets/guidance_sweep.png) |
+Each column starts from the same initial noise and class; only `w` changes. Moderate guidance sharpens the class
+features, while large `w` over-saturates the image.
 
-**Reverse diffusion**, from pure noise (left) to the final sample (right):
-
-![trajectory](assets/trajectory.png)
+<p align="center">
+  <img src="assets/guidance_sweep.png" width="70%" alt="Guidance sweep">
+</p>
 
 ### Noise schedules
 
